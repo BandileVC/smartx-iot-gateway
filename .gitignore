@@ -1,0 +1,6 @@
+bin/
+obj/
+*.user
+.vs/
+wwwroot/uploads/*.enc
+appsettings.Development.json
