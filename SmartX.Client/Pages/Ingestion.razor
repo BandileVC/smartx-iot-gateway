@@ -1,0 +1,321 @@
+@page "/ingestion"
+@using Microsoft.AspNetCore.SignalR.Client
+@inject ApiClient Api
+@implements IAsyncDisposable
+
+<div class="dashboard">
+    <h1>Sensor Data Ingestion &amp; Telemetry</h1>
+
+    @* ================= API STATUS STRIP ================= *@
+    <section class="status-strip">
+        <div class="status-pill @(status?.Online == true ? "online" : "offline")">
+            API: @(status?.Online == true ? "ONLINE" : "OFFLINE")
+        </div>
+        <div class="stat"><span>Registered Sensors</span><strong>@(status?.TotalRegisteredSensors ?? 0)</strong></div>
+        <div class="stat"><span>Generated</span><strong>@(status?.TelemetryGenerated ?? 0)</strong></div>
+        <div class="stat"><span>Transmitted</span><strong>@(status?.TelemetryTransmitted ?? 0)</strong></div>
+        <div class="stat"><span>Received</span><strong>@(status?.TelemetryReceived ?? 0)</strong></div>
+        <div class="stat"><span>Stored</span><strong>@(status?.TotalRecordsStored ?? 0)</strong></div>
+        <div class="stat"><span>Last Insert (µs)</span><strong>@(status?.LastInsertMicroseconds?.ToString("F1") ?? "-")</strong></div>
+        <div class="stat"><span>Last Search (µs)</span><strong>@(status?.LastSearchMicroseconds?.ToString("F1") ?? "-")</strong></div>
+        <div class="stat"><span>Algorithm</span><strong class="small">@(status?.SearchAlgorithm)</strong></div>
+        <button class="btn small" @onclick="RefreshStatusAsync">↻ Refresh</button>
+    </section>
+
+    <div class="grid-2col">
+
+        @* ================= REGISTER SENSOR ================= *@
+        <section class="card">
+            <h2>1. Register Sensor</h2>
+            <label>MAC Address / Unique ID</label>
+            <input @bind="newMac" placeholder="AA:BB:CC:DD:EE:FF" />
+
+            <label>Deployment Location (Facility/Zone/Sub-Zone)</label>
+            <select @bind="newLocation">
+                <option value="Facility A/Zone 1/Sub-Zone B">Facility A / Zone 1 / Sub-Zone B</option>
+                <option value="Facility A/Zone 1/Sub-Zone C">Facility A / Zone 1 / Sub-Zone C</option>
+                <option value="Facility A/Zone 2/Sub-Zone A">Facility A / Zone 2 / Sub-Zone A</option>
+                <option value="Facility B/Zone 1/Sub-Zone A">Facility B / Zone 1 / Sub-Zone A</option>
+            </select>
+
+            <label>Sensor Category</label>
+            <select @bind="newCategory">
+                <option value="Environmental">Environmental (float)</option>
+                <option value="PowerConsumption">Power Consumption (int)</option>
+                <option value="Actuator">Actuator (bool)</option>
+            </select>
+
+            <button class="btn" @onclick="RegisterSensorAsync">Register Sensor</button>
+            @if (!string.IsNullOrEmpty(registerMessage))
+            {
+                <p class="hint">@registerMessage</p>
+            }
+
+            <h3>Registered Sensors (@sensors.Count)</h3>
+            <ul class="sensor-list">
+                @foreach (var s in sensors)
+                {
+                    <li class="@(s.SensorId == selectedSensorId ? "selected" : "")" @onclick="() => selectedSensorId = s.SensorId">
+                        <strong>@s.SensorId</strong> &mdash; @s.Category &mdash; @s.DeploymentLocation
+                    </li>
+                }
+            </ul>
+        </section>
+
+        @* ================= ATTACH FILE ================= *@
+        <section class="card">
+            <h2>2. Attach Device File / Log / Photo</h2>
+            <p class="hint">Selected sensor: <strong>@(selectedSensorId ?? "none")</strong></p>
+            <InputFile OnChange="OnFileSelected" />
+            @if (uploading) { <p class="hint">Encrypting &amp; uploading&hellip;</p> }
+            @if (!string.IsNullOrEmpty(uploadMessage)) { <p class="hint">@uploadMessage</p> }
+        </section>
+
+        @* ================= GENERATE TELEMETRY ================= *@
+        <section class="card">
+            <h2>3. Generate Telemetry</h2>
+
+            <div class="row">
+                <button class="btn" @onclick="SendSingleReadingAsync" disabled="@(selectedSensorId is null)">
+                    Send Single Reading
+                </button>
+            </div>
+
+            <div class="row">
+                <label>Batch size (sensors)</label>
+                <input type="number" @bind="batchSize" min="1" max="50" />
+                <button class="btn" @onclick="GenerateBatchAsync">Generate Batch (jagged array)</button>
+            </div>
+            @if (!string.IsNullOrEmpty(batchMessage))
+            {
+                <p class="hint">@batchMessage</p>
+            }
+        </section>
+
+        @* ================= SEARCH HISTORY ================= *@
+        <section class="card">
+            <h2>4. Search Historical Data (BST)</h2>
+            <label>From</label>
+            <input type="datetime-local" @bind="searchFrom" />
+            <label>To</label>
+            <input type="datetime-local" @bind="searchTo" />
+            <button class="btn" @onclick="SearchHistoryAsync" disabled="@(selectedSensorId is null)">Search</button>
+            @if (!string.IsNullOrEmpty(searchMessage))
+            {
+                <p class="hint">@searchMessage</p>
+            }
+        </section>
+
+        @* ================= PERFORMANCE TEST ================= *@
+        <section class="card">
+            <h2>5. Run Performance Test</h2>
+            <label>Records to insert</label>
+            <input type="number" @bind="perfCount" min="10" max="200000" />
+            <button class="btn" @onclick="RunPerformanceTestAsync" disabled="@(selectedSensorId is null)">Run</button>
+            @if (!string.IsNullOrEmpty(perfMessage))
+            {
+                <p class="hint">@perfMessage</p>
+            }
+        </section>
+
+    </div>
+
+    @* ================= LIVE ANOMALY PULSE FEED (engagement feature) ================= *@
+    <section class="card live-feed">
+        <h2>Live Telemetry Feed <span class="hub-status @(hubConnected ? "on" : "off")">@(hubConnected ? "● connected" : "○ disconnected")</span></h2>
+        <p class="hint">Readings pulse red when they fall outside the safe band &mdash; the engagement strategy from the Task 1 research report, applied here for instant anomaly/disconnect spotting.</p>
+        <div class="feed-list">
+            @foreach (var r in liveFeed.Take(25))
+            {
+                <div class="feed-row @(r.IsAnomaly ? "anomaly-pulse" : "")">
+                    <span class="feed-time">@r.TimestampUtc.ToString("HH:mm:ss.fff")</span>
+                    <span class="feed-sensor">@r.SensorId</span>
+                    <span class="feed-cat">@r.Category</span>
+                    <span class="feed-value">@r.NumericValue.ToString("F2")</span>
+                    @if (r.IsAnomaly) { <span class="feed-flag">⚠ ANOMALY</span> }
+                </div>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    private ApiStatusDto? status;
+    private List<SensorProfile> sensors = new();
+    private string? selectedSensorId;
+
+    private string newMac = "";
+    private string newLocation = "Facility A/Zone 1/Sub-Zone B";
+    private SensorCategory newCategory = SensorCategory.Environmental;
+    private string? registerMessage;
+
+    private bool uploading;
+    private string? uploadMessage;
+
+    private int batchSize = 5;
+    private string? batchMessage;
+
+    private DateTime searchFrom = DateTime.Now.AddHours(-24);
+    private DateTime searchTo = DateTime.Now;
+    private string? searchMessage;
+
+    private int perfCount = 5000;
+    private string? perfMessage;
+
+    private readonly List<TelemetryReadingDto> liveFeed = new();
+    private HubConnection? hubConnection;
+    private bool hubConnected;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshStatusAsync();
+        await RefreshSensorsAsync();
+
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl($"{Api.BaseAddress}/hubs/telemetry")
+            .WithAutomaticReconnect()
+            .Build();
+
+        hubConnection.On<TelemetryReadingDto>("ReceiveTelemetry", reading =>
+        {
+            liveFeed.Insert(0, reading);
+            InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.On<List<TelemetryReadingDto>>("ReceiveBatch", batch =>
+        {
+            liveFeed.InsertRange(0, batch.AsEnumerable().Reverse());
+            InvokeAsync(StateHasChanged);
+        });
+
+        hubConnection.Closed += _ => { hubConnected = false; return InvokeAsync(StateHasChanged); };
+
+        try
+        {
+            await hubConnection.StartAsync();
+            hubConnected = true;
+        }
+        catch
+        {
+            hubConnected = false;
+        }
+    }
+
+    private async Task RefreshStatusAsync() => status = await Api.GetStatusAsync();
+
+    private async Task RefreshSensorsAsync()
+    {
+        sensors = await Api.GetSensorsAsync() ?? new();
+        selectedSensorId ??= sensors.FirstOrDefault()?.SensorId;
+    }
+
+    private async Task RegisterSensorAsync()
+    {
+        var (success, sensor, error) = await Api.RegisterSensorAsync(new RegisterSensorRequest
+        {
+            MacAddress = newMac,
+            DeploymentLocation = newLocation,
+            Category = newCategory
+        });
+
+        registerMessage = success
+            ? $"Registered {sensor!.SensorId} at {sensor.DeploymentLocation}."
+            : $"Registration failed: {error}";
+
+        if (success)
+        {
+            await RefreshSensorsAsync();
+            await RefreshStatusAsync();
+        }
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        if (selectedSensorId is null) return;
+        uploading = true;
+        uploadMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var file = e.File;
+            using var content = new MultipartFormDataContent();
+            var stream = file.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+            var streamContent = new StreamContent(stream);
+            content.Add(streamContent, "file", file.Name);
+
+            var response = await Api.UploadAttachmentAsync(selectedSensorId, content);
+            uploadMessage = response.IsSuccessStatusCode
+                ? $"Uploaded & encrypted: {file.Name}"
+                : $"Upload failed ({response.StatusCode}).";
+        }
+        finally
+        {
+            uploading = false;
+        }
+    }
+
+    private async Task SendSingleReadingAsync()
+    {
+        if (selectedSensorId is null) return;
+        var sensor = sensors.First(s => s.SensorId == selectedSensorId);
+        var rnd = Random.Shared;
+
+        var request = sensor.Category switch
+        {
+            SensorCategory.Environmental => new IngestTelemetryRequest
+            {
+                SensorId = selectedSensorId, Category = sensor.Category, PayloadType = PayloadType.Float,
+                FloatValue = (float)(20 + rnd.NextDouble() * 60)
+            },
+            SensorCategory.PowerConsumption => new IngestTelemetryRequest
+            {
+                SensorId = selectedSensorId, Category = sensor.Category, PayloadType = PayloadType.Int,
+                IntValue = rnd.Next(0, 4500)
+            },
+            _ => new IngestTelemetryRequest
+            {
+                SensorId = selectedSensorId, Category = sensor.Category, PayloadType = PayloadType.Bool,
+                BoolValue = rnd.Next(0, 2) == 1
+            }
+        };
+
+        await Api.IngestAsync(request);
+        await RefreshStatusAsync();
+    }
+
+    private async Task GenerateBatchAsync()
+    {
+        var response = await Api.GenerateBatchAsync(new GenerateBatchRequest { SensorCount = batchSize });
+        batchMessage = response.IsSuccessStatusCode
+            ? "Batch generated (jagged array -> flattened -> List<T> -> BST) and pushed live."
+            : $"Batch generation failed ({response.StatusCode}).";
+        await RefreshStatusAsync();
+    }
+
+    private async Task SearchHistoryAsync()
+    {
+        if (selectedSensorId is null) return;
+        var response = await Api.SearchHistoryAsync(selectedSensorId, searchFrom.ToUniversalTime(), searchTo.ToUniversalTime());
+        searchMessage = response.IsSuccessStatusCode
+            ? await response.Content.ReadAsStringAsync()
+            : $"Search failed ({response.StatusCode}).";
+        await RefreshStatusAsync();
+    }
+
+    private async Task RunPerformanceTestAsync()
+    {
+        if (selectedSensorId is null) return;
+        var response = await Api.RunPerformanceTestAsync(selectedSensorId, perfCount);
+        perfMessage = response.IsSuccessStatusCode
+            ? await response.Content.ReadAsStringAsync()
+            : $"Performance test failed ({response.StatusCode}).";
+        await RefreshStatusAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+            await hubConnection.DisposeAsync();
+    }
+}
