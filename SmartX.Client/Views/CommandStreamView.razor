@@ -1,0 +1,239 @@
+@using System.Globalization
+@implements IDisposable
+@inject StreamStore Store
+
+<div class="dashboard">
+    <h1>
+        Real-Time Command Stream &amp; History
+        <span class="hub-status @(Store.HubConnected ? "on" : "off")">@(Store.HubConnected ? "● live" : "○ reconnecting…")</span>
+    </h1>
+
+    @if (Store.LastError is not null)
+    {
+        <div class="banner-error">API unreachable &mdash; retrying automatically. (@Store.LastError)</div>
+    }
+
+    @* ============ PIPELINE STATS ============ *@
+    @if (Store.Stats is { } s)
+    {
+        <section class="status-strip">
+            <div class="stat"><span>Standard queue</span><strong>@s.StandardQueueDepth</strong></div>
+            <div class="stat"><span>Priority queue</span><strong class="@(s.PriorityQueueDepth > 0 ? "hot" : "")">@s.PriorityQueueDepth</strong></div>
+            <div class="stat"><span>Processed</span><strong>@s.TotalProcessed</strong></div>
+            <div class="stat"><span>Priority processed</span><strong>@s.PriorityProcessed</strong></div>
+            <div class="stat"><span>Avg latency: priority</span><strong>@s.AvgPriorityLatencyMs ms</strong></div>
+            <div class="stat"><span>Avg latency: standard</span><strong>@s.AvgStandardLatencyMs ms</strong></div>
+            <div class="stat"><span>Active alerts</span><strong>@s.ActiveAlerts</strong></div>
+            <div class="stat"><span>Duplicate alerts suppressed</span><strong>@s.DuplicateAlertsSuppressed</strong></div>
+            <div class="stat"><span>Devices</span><strong>@s.RegisteredDevices</strong></div>
+            <div class="stat"><span>Undo stack</span><strong>@s.UndoDepth</strong></div>
+        </section>
+    }
+
+    @if (Store.Message is not null)
+    {
+        <p class="hint">@Store.Message</p>
+    }
+
+    @* ============ SUGGESTED ACTIONS / AUTOMATED INSIGHTS ============ *@
+    <section class="card insights">
+        <h2>💡 Suggested Actions &amp; Automated Insights
+            <button class="btn small" @onclick="Store.SeedDemoAsync">🧪 Train demo history</button>
+        </h2>
+        @if (Store.Insights.Count == 0)
+        {
+            <p class="hint">Nothing to flag. Insights appear when a device trends toward a limit, needs attention, or matches a learned pattern.</p>
+        }
+        @foreach (var i in Store.Insights)
+        {
+            <div class="insight insight--@(i.Kind.ToString().ToLowerInvariant())" @key="i.Id">
+                <div class="insight-body">
+                    <strong>@KindIcon(i.Kind) @i.Title</strong>
+                    <span class="hint">@i.Reason</span>
+                </div>
+                <div class="insight-side">
+                    <span class="conf">@i.Confidence.ToString("P0")</span>
+                    @if (i.SuggestedCommand is not null)
+                    {
+                        <button class="btn small" @onclick="() => ApplyAsync(i)">Apply</button>
+                    }
+                    else
+                    {
+                        <button class="btn small" @onclick="() => Store.SelectAsync(i.TargetMac)">Inspect</button>
+                    }
+                </div>
+            </div>
+        }
+    </section>
+
+    @* ============ SEARCH / FILTER ============ *@
+    <section class="card filter-bar">
+        <input placeholder="Search devices by name, MAC or location (Enter to log the search)…"
+               @bind="Store.FilterQuery" @bind:event="oninput" @onkeydown="OnKeyDown" />
+        <select @bind="Store.FilterCategory">
+            <option value="">All categories</option>
+            <option value="Environmental">Environmental</option>
+            <option value="PowerConsumption">Power consumption</option>
+            <option value="Actuator">Actuator</option>
+        </select>
+        <label class="check"><input type="checkbox" @bind="Store.AlertsOnly" /> Active alerts only</label>
+        <button class="btn small" @onclick="SearchAsync">Search</button>
+    </section>
+
+    <div class="grid-2col">
+        @* ============ DEVICES + OVERRIDES ============ *@
+        <section class="card">
+            <h2>Devices (@Visible.Count() of @Store.Devices.Count)</h2>
+            <div class="device-grid">
+                @foreach (var d in Visible)
+                {
+                    <div class="device-card status-@(d.Status.ToString().ToLowerInvariant()) @(IsSelected(d) ? "selected" : "")"
+                         @key="d.MacAddress" @onclick="() => Store.SelectAsync(d.MacAddress)">
+                        <div class="device-head">
+                            <strong>@d.Name</strong>
+                            <span class="badge badge--@(d.Status.ToString().ToLowerInvariant())">@d.Status</span>
+                        </div>
+                        <div class="hint">@d.Category &middot; @d.Location</div>
+                        <div class="hint mono">@d.MacAddress</div>
+                        <div class="device-value">@FormatValue(d)</div>
+                        @if (d.Category == SensorCategory.Actuator)
+                        {
+                            <div class="row">
+                                <button class="btn small" @onclick='() => Send(d.MacAddress, "ON")' @onclick:stopPropagation="true">ON</button>
+                                <button class="btn small" @onclick='() => Send(d.MacAddress, "OFF")' @onclick:stopPropagation="true">OFF</button>
+                                <button class="btn small" @onclick='() => Send(d.MacAddress, "TOGGLE")' @onclick:stopPropagation="true">Toggle</button>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </section>
+
+        <div>
+            @* ============ TIMELINE ============ *@
+            <section class="card">
+                <h2>📈 Timeline @(SelectedName is null ? "" : "— " + SelectedName)</h2>
+                @if (Store.SelectedMac is null)
+                {
+                    <p class="hint">Select a device to see its timeline (served from a SortedDictionary).</p>
+                }
+                else
+                {
+                    <Sparkline Points="Store.Timeline" />
+                }
+            </section>
+
+            @* ============ ACTIVE ALERTS (HashSet) ============ *@
+            <section class="card">
+                <h2>🚨 Active alerts (@Store.Alerts.Count)</h2>
+                @if (Store.Alerts.Count == 0) { <p class="hint">All clear.</p> }
+                @foreach (var a in Store.Alerts)
+                {
+                    <div class="alert-row alert-row--@(a.Severity.ToString().ToLowerInvariant())" @key="a.Key">
+                        <strong>@a.DeviceName</strong>
+                        <span>@a.Message</span>
+                        <span class="hint">@a.RaisedUtc.ToLocalTime().ToString("HH:mm:ss")</span>
+                    </div>
+                }
+            </section>
+        </div>
+    </div>
+
+    @* ============ COMMAND HISTORY (Stack) ============ *@
+    <section class="card">
+        <h2>🕹️ Command history &amp; undo</h2>
+        <div class="row">
+            <button class="btn" @onclick="Store.UndoAsync" disabled="@(Store.History?.UndoDepth is null or 0)">
+                ↩ Undo last (@(Store.History?.UndoDepth ?? 0) on stack)
+            </button>
+            <button class="btn" @onclick='() => Store.BulkAsync("OFF", "Valve")'>Close all valves</button>
+            <button class="btn" @onclick='() => Store.BulkAsync("OFF", null)'>Shut down ALL actuators</button>
+        </div>
+        @if (Store.History?.NextUndo is { } next)
+        {
+            <p class="hint">Next undo reverts: <strong>@next.Description</strong></p>
+        }
+        <div class="history-list">
+            @foreach (var c in Store.History?.Audit ?? new())
+            {
+                <div class="history-row @(c.IsUndo ? "history-row--undo" : "")" @key="c.Id">
+                    <span class="feed-time">@c.IssuedUtc.ToLocalTime().ToString("HH:mm:ss")</span>
+                    <span>@c.Description</span>
+                    <span class="hint">@c.Source</span>
+                </div>
+            }
+        </div>
+    </section>
+
+    @* ============ LIVE STREAM ============ *@
+    <section class="card live-feed">
+        <h2>Live stream</h2>
+        <div class="feed-list">
+            @foreach (var r in Store.Feed.Take(25))
+            {
+                <div class="stream-row @(r.Lane == "Priority" ? "stream-row--priority" : "")">
+                    <span class="feed-time">@r.TimestampUtc.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                    <span>@r.Name</span>
+                    <span>@r.Value.ToString("F1", CultureInfo.InvariantCulture)</span>
+                    <span class="lane lane--@(r.Lane.ToLowerInvariant())">@r.Lane</span>
+                    <span class="hint">#@r.Sequence &middot; @r.QueueLatencyMs ms</span>
+                </div>
+            }
+        </div>
+    </section>
+</div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        Store.Changed += OnStoreChanged;
+        await Store.StartAsync();
+    }
+
+    private void OnStoreChanged() => InvokeAsync(StateHasChanged);
+
+    private IEnumerable<DeviceStateDto> Visible =>
+        Store.Devices.Values
+            .Where(d => DeviceFilter.Matches(d, Store.FilterQuery, Store.CategoryFilter, Store.AlertsOnly))
+            .OrderByDescending(d => (int)d.Status).ThenBy(d => d.Name);
+
+    private string? SelectedName =>
+        Store.SelectedMac is not null && Store.Devices.TryGetValue(Store.SelectedMac, out var d) ? d.Name : null;
+
+    private bool IsSelected(DeviceStateDto d) =>
+        string.Equals(d.MacAddress, Store.SelectedMac, StringComparison.OrdinalIgnoreCase);
+
+    private Task Send(string mac, string action) => Store.SendCommandAsync(mac, action);
+
+    private Task ApplyAsync(SuggestedActionDto i) =>
+        Store.SendCommandAsync(i.TargetMac, i.SuggestedCommand!, "Suggestion");
+
+    private async Task SearchAsync()
+    {
+        await Store.SearchAsync();
+        var first = Visible.FirstOrDefault();
+        if (first is not null) await Store.SelectAsync(first.MacAddress);
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await SearchAsync();
+    }
+
+    private static string KindIcon(InsightKind k) => k switch
+    {
+        InsightKind.LearnedPattern => "🧠",
+        InsightKind.PredictedBreach => "📉",
+        _ => "⚠️"
+    };
+
+    private static string FormatValue(DeviceStateDto d)
+    {
+        if (d.Category == SensorCategory.Actuator) return d.ActuatorOn ? "ON" : "OFF";
+        if (d.LatestValue is null) return "—";
+        var unit = d.Category == SensorCategory.PowerConsumption ? " W" : "";
+        return d.LatestValue.Value.ToString("F1", CultureInfo.InvariantCulture) + unit;
+    }
+
+    public void Dispose() => Store.Changed -= OnStoreChanged;
+}
