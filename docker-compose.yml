@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   smartx-api:
     build:
@@ -15,5 +14,16 @@ services:
       dockerfile: SmartX.Client/Dockerfile
     ports:
       - "8080:80"
+    depends_on:
+      - smartx-api
+
+  smartx-simulator:
+    profiles: ["sim"]          # docker compose --profile sim up --build
+    build:
+      context: .
+      dockerfile: SmartX.Simulator/Dockerfile
+    environment:
+      - SMARTX_API=http://smartx-api:5050
+    command: ["run"]
     depends_on:
       - smartx-api
