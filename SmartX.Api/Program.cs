@@ -4,17 +4,28 @@ using SmartX.Api.Hubs;
 using SmartX.Shared.Collections;
 using SmartX.Shared.Models;
 using SmartX.Shared.Services;
+using SmartX.Api.Endpoints;
+using SmartX.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// --- Services -------------------------------------------------------------
+
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<InMemoryStore>();
+builder.Services.AddSingleton<DeviceRegistry>();
+builder.Services.AddSingleton<TimelineStore>();
+builder.Services.AddSingleton<AlertTracker>();
+builder.Services.AddSingleton<StreamMetrics>();
+builder.Services.AddSingleton<TelemetryPipeline>();
+builder.Services.AddSingleton<PredictionEngine>();
+builder.Services.AddSingleton<CommandService>();
+builder.Services.AddHostedService<TelemetryProcessor>();
+builder.Services.AddHostedService<DeviceWatchdog>();
 
 var encryptionKey = builder.Configuration["FileEncryption:Key"];
 if (string.IsNullOrWhiteSpace(encryptionKey))
 {
-    // Dev fallback so the API boots out-of-the-box; replace via appsettings/secret in real deployments.
+
     encryptionKey = FileEncryptionService.GenerateBase64Key();
     Console.WriteLine("[SmartX] No FileEncryption:Key configured - generated an ephemeral dev key.");
 }
@@ -23,7 +34,7 @@ builder.Services.AddSingleton(new FileEncryptionService(encryptionKey));
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("SmartXClient", policy =>
-        policy.WithOrigins("http://localhost:5000", "https://localhost:5001", "https://localhost:7050", "http://localhost:5050")
+        policy.SetIsOriginAllowed(_ => true)   
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials());
@@ -33,22 +44,21 @@ var app = builder.Build();
 
 app.UseCors("SmartXClient");
 app.MapHub<TelemetryHub>("/hubs/telemetry");
+app.MapCommandStreamEndpoints();
 
 var uploadsDir = Path.Combine(AppContext.BaseDirectory, "wwwroot", "uploads");
 Directory.CreateDirectory(uploadsDir);
 
-// --- Anomaly thresholds (simple, documented rolling-band check) -----------
+
 static bool IsAnomaly(SensorCategory category, double value) => category switch
 {
-    SensorCategory.Environmental => value is < 20 or > 70,   // baseline 45 +/- 25
-    SensorCategory.PowerConsumption => value is < 0 or > 4000, // watts
-    SensorCategory.Actuator => false, // boolean state changes are events, not anomalies
+    SensorCategory.Environmental => value is < 20 or > 70,   
+    SensorCategory.PowerConsumption => value is < 0 or > 4000, 
+    SensorCategory.Actuator => false, 
     _ => false
 };
 
-// ============================================================================
-// Sensor registration & deployment validation
-// ============================================================================
+
 
 app.MapGet("/api/status", (InMemoryStore store) =>
 {
@@ -77,7 +87,7 @@ app.MapPost("/api/deployment/validate", (DeploymentValidationRequest req, InMemo
 
 app.MapGet("/api/deployment/tree", (InMemoryStore store) => Results.Ok(store.DeploymentRoot));
 
-app.MapPost("/api/sensors/register", async (RegisterSensorRequest req, InMemoryStore store) =>
+app.MapPost("/api/sensors/register", async (RegisterSensorRequest req, InMemoryStore store, DeviceRegistry registry) =>
 {
     var segments = req.DeploymentLocation.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
     var validation = DeploymentNode.ValidatePath(store.DeploymentRoot, segments);
@@ -96,15 +106,15 @@ app.MapPost("/api/sensors/register", async (RegisterSensorRequest req, InMemoryS
     store.IntHistories[profile.SensorId] = new TelemetryHistory<int>();
     store.BoolHistories[profile.SensorId] = new TelemetryHistory<bool>();
 
-    await Task.CompletedTask; // keep endpoint async per the async-communication rubric item
+    registry.RegisterFromSensor(profile);
+
+    await Task.CompletedTask; 
     return Results.Ok(profile);
 });
 
 app.MapGet("/api/sensors", (InMemoryStore store) => Results.Ok(store.Sensors.Values.ToList()));
 
-// ============================================================================
-// Telemetry ingestion (single + batch)
-// ============================================================================
+
 
 app.MapPost("/api/telemetry/ingest", async (IngestTelemetryRequest req, InMemoryStore store,
     Microsoft.AspNetCore.SignalR.IHubContext<TelemetryHub> hub) =>
@@ -164,11 +174,11 @@ app.MapPost("/api/telemetry/batch", async (GenerateBatchRequest req, InMemorySto
     if (sensorIds.Count == 0)
         return Results.BadRequest(new { error = "No registered sensors available for batch simulation." });
 
-    // Step 1: raw capture into a jagged array (one row per sensor, uneven sample counts).
+    
     var jagged = BatchGenerator.GenerateRawEnvironmentalBatch(sensorIds.Count);
     store.RecordGenerated(jagged.Sum(row => row.Length));
 
-    // Step 2: flatten jagged array into the optimised List<T> for transmission.
+
     var packets = BatchGenerator.FlattenToPackets(jagged, sensorIds, SensorCategory.Environmental);
     store.RecordTransmitted(packets.Count);
 
@@ -199,9 +209,7 @@ app.MapPost("/api/telemetry/batch", async (GenerateBatchRequest req, InMemorySto
     return Results.Ok(new { batchSize = dtos.Count, jaggedRows = jagged.Length, dtos });
 });
 
-// ============================================================================
-// Historical search (exercises the custom BST's SearchRange)
-// ============================================================================
+
 
 app.MapGet("/api/telemetry/history/{sensorId}", (string sensorId, DateTime? from, DateTime? to, InMemoryStore store) =>
 {
@@ -223,9 +231,7 @@ app.MapGet("/api/telemetry/history/{sensorId}", (string sensorId, DateTime? from
     });
 });
 
-// ============================================================================
-// Performance test - insert N synthetic readings and report timing
-// ============================================================================
+
 
 app.MapPost("/api/telemetry/performance-test/{sensorId}/{count:int}", (string sensorId, int count, InMemoryStore store) =>
 {
@@ -257,9 +263,7 @@ app.MapPost("/api/telemetry/performance-test/{sensorId}/{count:int}", (string se
     });
 });
 
-// ============================================================================
-// Encrypted file/log/photo attachment upload
-// ============================================================================
+
 
 app.MapPost("/api/sensors/{sensorId}/attachments", async (string sensorId, HttpRequest request,
     InMemoryStore store, FileEncryptionService encryption) =>
