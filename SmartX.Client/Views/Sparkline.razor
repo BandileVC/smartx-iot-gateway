@@ -1,0 +1,54 @@
+@using System.Globalization
+
+<div class="spark-wrap">
+    <svg viewBox="@ViewBox" preserveAspectRatio="none" class="sparkline">
+        @if (HasData)
+        {
+            <polyline fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" points="@PointString" />
+        }
+    </svg>
+    @if (HasData)
+    {
+        <div class="spark-meta">
+            <span>min @Fmt(Min)</span>
+            <span>latest @Fmt(Last)</span>
+            <span>max @Fmt(Max)</span>
+            <span>@Points.Count points</span>
+        </div>
+    }
+    else
+    {
+        <p class="hint">Waiting for readings&hellip;</p>
+    }
+</div>
+
+@code {
+    private const int W = 600, H = 140, Pad = 10;
+
+    [Parameter] public IReadOnlyList<TimelinePointDto> Points { get; set; } = Array.Empty<TimelinePointDto>();
+
+    private string ViewBox => $"0 0 {W} {H}";
+    private bool HasData => Points.Count >= 2;
+    private double Min => Points.Min(p => p.Value);
+    private double Max => Points.Max(p => p.Value);
+    private double Last => Points[Points.Count - 1].Value;
+
+    private static string Fmt(double v) => v.ToString("F1", CultureInfo.InvariantCulture);
+
+    private string PointString
+    {
+        get
+        {
+            double min = Min, range = Math.Max(Max - min, 1e-9);
+            var sb = new System.Text.StringBuilder();
+            for (var i = 0; i < Points.Count; i++)
+            {
+                var x = (double)i / (Points.Count - 1) * W;
+                var y = H - Pad - (Points[i].Value - min) / range * (H - 2 * Pad);
+                sb.Append(x.ToString("F1", CultureInfo.InvariantCulture)).Append(',')
+                  .Append(y.ToString("F1", CultureInfo.InvariantCulture)).Append(' ');
+            }
+            return sb.ToString();
+        }
+    }
+}
