@@ -1,13 +1,70 @@
 @inherits LayoutComponentBase
+@implements IDisposable
+@inject NavigationManager Nav
+@inject StreamStore Store
 
 <div class="page">
     <header class="topbar">
         <span class="brand">Smart-X <span class="brand-accent">Mesh Gateway</span></span>
-        <a href="/" class="topbar-link">Home</a>
-        <a href="/ingestion" class="topbar-link">Sensor Ingestion</a>
+        <NavLink class="topbar-link" href="" Match="NavLinkMatch.All">Home</NavLink>
+        <NavLink class="topbar-link" href="ingestion">📡 Sensor Ingestion</NavLink>
+        <NavLink class="topbar-link" href="command-stream">
+            🕹️ Command Stream
+            @if (Store.Alerts.Count > 0)
+            {
+                <span class="nav-badge">@Store.Alerts.Count</span>
+            }
+        </NavLink>
+        <NavLink class="topbar-link" href="mesh">🕸️ Mesh Routing</NavLink>
+        <span class="hub-status topbar-status @(Store.HubConnected ? "on" : "off")">@(Store.HubConnected ? "● live" : "○ offline")</span>
     </header>
 
     <main class="content">
-        @Body
+        @if (visited.Contains("ingestion"))
+        {
+            <div class="module" hidden="@(Current != "ingestion")"><IngestionView /></div>
+        }
+        @if (visited.Contains("command-stream"))
+        {
+            <div class="module" hidden="@(Current != "command-stream")"><CommandStreamView /></div>
+        }
+        @if (Current is not ("ingestion" or "command-stream"))
+        {
+            @Body
+        }
     </main>
 </div>
+
+@code {
+    private readonly HashSet<string> visited = new();
+
+    private string Current => Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/').ToLowerInvariant();
+
+    protected override void OnInitialized()
+    {
+        Touch();
+        Nav.LocationChanged += OnLocationChanged;
+        Store.Changed += OnStoreChanged;
+        _ = Store.StartAsync();   // one connection for the whole app; powers the nav alert badge everywhere
+    }
+
+    private void Touch()
+    {
+        var c = Current;
+        if (c is "ingestion" or "command-stream") visited.Add(c);
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        Touch();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnStoreChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+        Store.Changed -= OnStoreChanged;
+    }
+}
