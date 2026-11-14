@@ -21,6 +21,7 @@ builder.Services.AddSingleton<PredictionEngine>();
 builder.Services.AddSingleton<CommandService>();
 builder.Services.AddHostedService<TelemetryProcessor>();
 builder.Services.AddHostedService<DeviceWatchdog>();
+builder.Services.AddSingleton<HistoryStore>();
 
 var encryptionKey = builder.Configuration["FileEncryption:Key"];
 if (string.IsNullOrWhiteSpace(encryptionKey))
@@ -45,6 +46,7 @@ var app = builder.Build();
 app.UseCors("SmartXClient");
 app.MapHub<TelemetryHub>("/hubs/telemetry");
 app.MapCommandStreamEndpoints();
+app.MapMeshEndpoints();
 
 var uploadsDir = Path.Combine(AppContext.BaseDirectory, "wwwroot", "uploads");
 Directory.CreateDirectory(uploadsDir);

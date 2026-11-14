@@ -5,7 +5,7 @@ using SmartX.Shared.Models;
 namespace SmartX.Api.Services;
 
 public class TelemetryProcessor(
-    TelemetryPipeline pipeline, DeviceRegistry registry, TimelineStore timeline, AlertTracker alerts,
+    TelemetryPipeline pipeline, DeviceRegistry registry, TimelineStore timeline, HistoryStore history, AlertTracker alerts,
     PredictionEngine engine, StreamMetrics metrics, IHubContext<TelemetryHub> hub,
     IConfiguration config, ILogger<TelemetryProcessor> log) : BackgroundService
 {
@@ -35,7 +35,8 @@ public class TelemetryProcessor(
 
         var device = registry.ApplyReading(p.Mac, p.Value, p.Severity);   
         if (device is null) return;
-        timeline.Add(p.Mac, p.TimestampUtc, p.Value);                      
+        timeline.Add(p.Mac, p.TimestampUtc, p.Value);
+        history.Add(p.Mac, p.TimestampUtc, p.Value);   // AVL tree: range-queryable history                      
 
         
         var dcKey = AlertTracker.KeyFor("DISCONNECTED", p.Mac);
