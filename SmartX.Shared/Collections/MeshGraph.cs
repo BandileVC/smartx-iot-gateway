@@ -106,5 +106,57 @@ public class MeshGraph
         return list;
     }
 
+        /// <summary>
+    /// Breadth-first search from 'start'. Visits nodes level by level using a FIFO Queue, so the first time
+    /// a node is reached is via the fewest possible hops. Down nodes are never entered when respectDown is true.
+    /// O(V + E).
+    /// </summary>
+    public BfsResult Bfs(string start, bool respectDown = true)
+    {
+        var result = new BfsResult();
+        if (!_adjacency.ContainsKey(start)) return result;
+        if (respectDown && IsDown(start)) return result;
+
+        var queue = new Queue<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { start };
+        queue.Enqueue(start);
+        result.Hops[start] = 0;
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            result.Order.Add(current);
+
+            foreach (var link in _adjacency[current])
+            {
+                if (visited.Contains(link.To)) continue;
+                if (respectDown && IsDown(link.To)) continue;
+
+                visited.Add(link.To);
+                result.Parent[link.To] = current;
+                result.Hops[link.To] = result.Hops[current] + 1;
+                queue.Enqueue(link.To);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Walks parent pointers from a node up to the root. Returns node -> ... -> root, or empty if there is no route.</summary>
+    public static List<string> PathToRoot(IReadOnlyDictionary<string, string> parent, string root, string node)
+    {
+        var path = new List<string> { node };
+        var current = node;
+        var guard = 0;
+
+        while (!string.Equals(current, root, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!parent.TryGetValue(current, out var next) || ++guard > 10000)
+                return new List<string>();
+            path.Add(next);
+            current = next;
+        }
+        return path;
+    }
+
     // BFS (Step 4) and Prim (Step 5) go below this line, inside the class.
 }
