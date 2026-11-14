@@ -130,3 +130,61 @@ body {
     position: fixed;
     bottom: 0; left: 0; right: 0;
 }
+
+/* ---- Part 2 ---- */
+[hidden] { display: none !important; }
+.topbar-link.active { color: var(--text); border-bottom: 2px solid var(--accent2); }
+.topbar-status { margin-left: auto; font-size: 0.8rem; }
+.hub-status { font-size: 0.75rem; margin-left: 0.75rem; }
+.hub-status.on { color: var(--accent); }
+.hub-status.off { color: var(--danger); }
+.nav-badge { background: var(--danger); color: #fff; border-radius: 999px; padding: 0.05rem 0.45rem; font-size: 0.7rem; margin-left: 0.3rem; }
+.banner-error { background: rgba(248,81,73,0.15); color: var(--danger); padding: 0.6rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+.stat strong.hot { color: var(--danger); }
+.mono { font-family: ui-monospace, monospace; }
+
+.insights h2 { display: flex; align-items: center; justify-content: space-between; }
+.insight { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.6rem 0.8rem; margin-bottom: 0.5rem; border-radius: 8px; border-left: 4px solid var(--accent2); background: rgba(88,166,255,0.07); }
+.insight--predictedbreach { border-left-color: #d29922; background: rgba(210,153,34,0.1); }
+.insight--needsattention { border-left-color: var(--danger); background: rgba(248,81,73,0.08); }
+.insight-body { display: flex; flex-direction: column; gap: 0.15rem; }
+.insight-side { display: flex; align-items: center; gap: 0.6rem; }
+.insight .btn.small { margin: 0; }
+.conf { font-size: 0.75rem; color: var(--muted); }
+
+.filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.filter-bar input:not([type=checkbox]) { flex: 1 1 280px; width: auto; }
+.filter-bar select { width: auto; }
+.filter-bar .check { display: flex; align-items: center; gap: 0.4rem; margin: 0; color: var(--text); }
+.filter-bar input[type=checkbox] { width: auto; }
+.filter-bar .btn { margin: 0; }
+
+.device-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 0.75rem; max-height: 560px; overflow-y: auto; }
+.device-card { border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem; cursor: pointer; background: #0d1117; }
+.device-card.selected { border-color: var(--accent2); }
+.device-card.status-critical { border-color: var(--danger); animation: pulse 1.2s ease-in-out infinite; }
+.device-card.status-warning { border-color: #d29922; }
+.device-card.status-offline { opacity: 0.55; }
+.device-head { display: flex; justify-content: space-between; align-items: center; }
+.device-value { font-size: 1.4rem; font-weight: 700; margin: 0.4rem 0; }
+.device-card .btn.small { margin: 0.2rem 0.2rem 0 0; }
+.badge { font-size: 0.65rem; padding: 0.1rem 0.5rem; border-radius: 999px; background: rgba(63,185,80,0.15); color: var(--accent); }
+.badge--critical { background: rgba(248,81,73,0.2); color: var(--danger); }
+.badge--warning { background: rgba(210,153,34,0.2); color: #d29922; }
+.badge--offline { background: rgba(139,148,158,0.2); color: var(--muted); }
+
+.sparkline { width: 100%; height: 140px; color: var(--accent2); background: #0d1117; border-radius: 8px; }
+.spark-meta { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; }
+
+.alert-row { display: grid; grid-template-columns: 150px 1fr 70px; gap: 0.5rem; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+.alert-row--critical { background: rgba(248,81,73,0.1); }
+
+.history-list { max-height: 260px; overflow-y: auto; margin-top: 0.75rem; }
+.history-row { display: grid; grid-template-columns: 90px 1fr 100px; gap: 0.5rem; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+.history-row--undo { color: var(--muted); font-style: italic; }
+
+.stream-row { display: grid; grid-template-columns: 100px 160px 80px 80px 1fr; gap: 0.5rem; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); align-items: center; }
+.stream-row--priority { background: rgba(248,81,73,0.12); }
+.lane { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 999px; text-align: center; }
+.lane--priority { background: rgba(248,81,73,0.25); color: var(--danger); font-weight: 700; }
+.lane--standard { background: rgba(88,166,255,0.15); color: var(--accent2); }

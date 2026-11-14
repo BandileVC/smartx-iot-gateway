@@ -9,4 +9,5 @@ RUN dotnet publish -c Release -o /app/publish
 
 FROM nginx:alpine AS final
 COPY --from=build /app/publish/wwwroot /usr/share/nginx/html
+COPY SmartX.Client/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

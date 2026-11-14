@@ -1,4 +1,3 @@
-@page "/ingestion"
 @using Microsoft.AspNetCore.SignalR.Client
 @inject ApiClient Api
 @implements IAsyncDisposable
@@ -167,39 +166,43 @@
     private bool hubConnected;
 
     protected override async Task OnInitializedAsync()
+{
+    try
     {
         await RefreshStatusAsync();
         await RefreshSensorsAsync();
-
-        hubConnection = new HubConnectionBuilder()
-            .WithUrl($"{Api.BaseAddress}/hubs/telemetry")
-            .WithAutomaticReconnect()
-            .Build();
-
-        hubConnection.On<TelemetryReadingDto>("ReceiveTelemetry", reading =>
-        {
-            liveFeed.Insert(0, reading);
-            InvokeAsync(StateHasChanged);
-        });
-
-        hubConnection.On<List<TelemetryReadingDto>>("ReceiveBatch", batch =>
-        {
-            liveFeed.InsertRange(0, batch.AsEnumerable().Reverse());
-            InvokeAsync(StateHasChanged);
-        });
-
-        hubConnection.Closed += _ => { hubConnected = false; return InvokeAsync(StateHasChanged); };
-
-        try
-        {
-            await hubConnection.StartAsync();
-            hubConnected = true;
-        }
-        catch
-        {
-            hubConnected = false;
-        }
     }
+    catch { /* API offline - status pill shows OFFLINE; Refresh works once it's up */ }
+
+    hubConnection = new HubConnectionBuilder()
+        .WithUrl($"{Api.BaseAddress}/hubs/telemetry")
+        .WithAutomaticReconnect()
+        .Build();
+
+    hubConnection.On<TelemetryReadingDto>("ReceiveTelemetry", reading =>
+    {
+        liveFeed.Insert(0, reading);
+        InvokeAsync(StateHasChanged);
+    });
+
+    hubConnection.On<List<TelemetryReadingDto>>("ReceiveBatch", batch =>
+    {
+        liveFeed.InsertRange(0, batch.AsEnumerable().Reverse());
+        InvokeAsync(StateHasChanged);
+    });
+
+    hubConnection.Closed += _ => { hubConnected = false; return InvokeAsync(StateHasChanged); };
+
+    try
+    {
+        await hubConnection.StartAsync();
+        hubConnected = true;
+    }
+    catch
+    {
+        hubConnected = false;
+    }
+}
 
     private async Task RefreshStatusAsync() => status = await Api.GetStatusAsync();
 
