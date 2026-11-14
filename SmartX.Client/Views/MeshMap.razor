@@ -1,0 +1,104 @@
+@using System.Globalization
+
+<div class="mesh-map">
+    @if (Analysis is null)
+    {
+        <p class="hint">Loading topology&hellip;</p>
+    }
+    else
+    {
+        <svg class="mesh-svg" viewBox="0 0 100 100" preserveAspectRatio="none">
+            @foreach (var edge in Analysis.Edges)
+            {
+                var p1 = Pos(edge.FromMac);
+                var p2 = Pos(edge.ToMac);
+                <line x1="@F(p1.X)" y1="@F(p1.Y)" x2="@F(p2.X)" y2="@F(p2.Y)"
+                      class="@EdgeClass(edge)" vector-effect="non-scaling-stroke" />
+            }
+        </svg>
+
+        @foreach (var edge in Analysis.Edges.Where(e => ShowLabel(e)))
+        {
+            var q1 = Pos(edge.FromMac);
+            var q2 = Pos(edge.ToMac);
+            <div class="mesh-cost" style="left:@F((q1.X + q2.X) / 2)%;top:@F((q1.Y + q2.Y) / 2)%">@edge.Cost.ToString("F0", CultureInfo.InvariantCulture)</div>
+        }
+
+        @foreach (var node in Analysis.Nodes)
+        {
+            var pos = Pos(node.MacAddress);
+            <div class="mesh-node @NodeClass(node)" style="left:@F(pos.X)%;top:@F(pos.Y)%"
+                 @key="node.MacAddress" @onclick="() => OnSelect.InvokeAsync(node.MacAddress)">
+                <div class="mesh-node-dot">@Icon(node)</div>
+                <div class="mesh-label">@node.Name</div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public MeshAnalysisDto? Analysis { get; set; }
+    [Parameter] public string? SelectedMac { get; set; }
+    [Parameter] public IReadOnlyList<string>? RoutePath { get; set; }
+    [Parameter] public bool ShowMst { get; set; } = true;
+    [Parameter] public EventCallback<string> OnSelect { get; set; }
+
+    private Dictionary<string, (double X, double Y)> _pos = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _routeEdges = new(StringComparer.OrdinalIgnoreCase);
+
+    protected override void OnParametersSet()
+    {
+        _pos = new Dictionary<string, (double X, double Y)>(StringComparer.OrdinalIgnoreCase);
+        if (Analysis is not null)
+        {
+            foreach (var n in Analysis.Nodes) _pos[n.MacAddress] = (n.X * 100, n.Y * 100);
+        }
+
+        _routeEdges = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (RoutePath is not null)
+        {
+            for (var i = 0; i + 1 < RoutePath.Count; i++) _routeEdges.Add(Key(RoutePath[i], RoutePath[i + 1]));
+        }
+    }
+
+    private (double X, double Y) Pos(string mac) => _pos.TryGetValue(mac, out var p) ? p : (50.0, 50.0);
+
+    private static string F(double v) => v.ToString("F2", CultureInfo.InvariantCulture);
+
+    private static string Key(string a, string b) =>
+        string.Compare(a, b, StringComparison.OrdinalIgnoreCase) < 0 ? a + "|" + b : b + "|" + a;
+
+    private bool IsRouteEdge(MeshEdgeDto e) => _routeEdges.Contains(Key(e.FromMac, e.ToMac));
+
+    private bool ShowLabel(MeshEdgeDto e) => e.Active && ((ShowMst && e.InMst) || IsRouteEdge(e));
+
+    private string EdgeClass(MeshEdgeDto e)
+    {
+        if (IsRouteEdge(e)) return "mesh-edge mesh-edge--route";
+        if (!e.Active) return "mesh-edge mesh-edge--down";
+        if (ShowMst && e.InMst) return "mesh-edge mesh-edge--mst";
+        return "mesh-edge";
+    }
+
+    private string NodeClass(MeshNodeDto n)
+    {
+        var css = "";
+        if (n.IsGateway) css += " mesh-node--gateway";
+        if (n.IsDown) css += " mesh-node--down";
+        else if (!n.IsGateway && n.Hops < 0) css += " mesh-node--cutoff";
+        if (string.Equals(n.MacAddress, SelectedMac, StringComparison.OrdinalIgnoreCase)) css += " mesh-node--selected";
+        return css;
+    }
+
+    private static string Icon(MeshNodeDto n)
+    {
+        if (n.IsGateway) return "📶";
+        if (n.IsDown) return "✖";
+        return n.Category switch
+        {
+            SensorCategory.PowerConsumption => "⚡",
+            SensorCategory.Actuator => "⚙",
+            _ => "🌡"
+        };
+    }
+}

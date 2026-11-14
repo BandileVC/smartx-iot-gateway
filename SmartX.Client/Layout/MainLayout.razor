@@ -28,7 +28,11 @@
         {
             <div class="module" hidden="@(Current != "command-stream")"><CommandStreamView /></div>
         }
-        @if (Current is not ("ingestion" or "command-stream"))
+        @if (visited.Contains("mesh"))
+        {
+            <div class="module" hidden="@(Current != "mesh")"><MeshView /></div>
+        }
+        @if (Current is not ("ingestion" or "command-stream" or "mesh"))
         {
             @Body
         }
@@ -45,13 +49,14 @@
         Touch();
         Nav.LocationChanged += OnLocationChanged;
         Store.Changed += OnStoreChanged;
-        _ = Store.StartAsync();   // one connection for the whole app; powers the nav alert badge everywhere
+        _ = Store.StartAsync();  
+            
     }
 
     private void Touch()
     {
         var c = Current;
-        if (c is "ingestion" or "command-stream") visited.Add(c);
+        if (c is "ingestion" or "command-stream" or "mesh") visited.Add(c);
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)

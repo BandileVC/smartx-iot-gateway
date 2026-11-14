@@ -1,0 +1,258 @@
+@using System.Globalization
+@implements IDisposable
+@inject MeshStore Mesh
+
+<div class="dashboard">
+    <h1>Network Topology &amp; Mesh Routing</h1>
+
+    @if (Mesh.Message is not null)
+    {
+        <p class="hint">@Mesh.Message</p>
+    }
+
+    @if (Mesh.Analysis is { } analysis)
+    {
+        @* ============ SUMMARY ============ *@
+        <section class="status-strip">
+            <div class="stat"><span>Mesh nodes</span><strong>@(analysis.Nodes.Count - 1)</strong></div>
+            <div class="stat"><span>Connected to gateway</span><strong>@analysis.ConnectedCount</strong></div>
+            <div class="stat"><span>Down</span><strong class="@(analysis.DownCount > 0 ? "hot" : "")">@analysis.DownCount</strong></div>
+            <div class="stat"><span>Cut off</span><strong class="@(analysis.CutOffCount > 0 ? "hot" : "")">@analysis.CutOffCount</strong></div>
+            <div class="stat"><span>Full-mesh power</span><strong>@F1(analysis.FullMeshCost)</strong></div>
+            <div class="stat"><span>MST power</span><strong>@F1(analysis.MstTotalCost)</strong></div>
+            <div class="stat"><span>MST saving</span><strong>@F1(analysis.SavingsPercent)%</strong></div>
+            <div class="stat"><span>Prim (µs)</span><strong>@F1(analysis.PrimMicroseconds)</strong></div>
+            <div class="stat"><span>BFS (µs)</span><strong>@F1(analysis.BfsMicroseconds)</strong></div>
+        </section>
+
+        @if (analysis.Nodes.Count <= 1)
+        {
+            <p class="hint">No devices yet. Start the simulator so nodes can join the mesh.</p>
+        }
+
+        @* ============ SEARCH ============ *@
+        <section class="card filter-bar">
+            <input placeholder="Find a node by MAC address or name, then track its route…"
+                   @bind="Mesh.SearchText" @bind:event="oninput" @onkeydown="OnKeyDown" />
+            <button class="btn small" @onclick="Mesh.FindAsync">Track route</button>
+            <label class="check"><input type="checkbox" @bind="Mesh.ShowMst" /> Show MST (lowest-power backbone)</label>
+            <button class="btn small" @onclick="Mesh.RestoreAllAsync">Restore all nodes</button>
+        </section>
+
+        <div class="grid-2col">
+            @* ============ MAP ============ *@
+            <section class="card">
+                <h2>🕸️ Live mesh</h2>
+                <MeshMap Analysis="Mesh.Analysis" SelectedMac="Mesh.SelectedMac" RoutePath="Mesh.Route?.MstPath"
+                         ShowMst="Mesh.ShowMst" OnSelect="Mesh.SelectAsync" />
+                <p class="hint">
+                    <span class="legend legend--mst"></span> MST backbone &nbsp;
+                    <span class="legend legend--route"></span> selected route &nbsp;
+                    <span class="legend legend--down"></span> down link &nbsp;&middot;&nbsp; numbers are link power cost
+                </p>
+            </section>
+
+            @* ============ SELECTED NODE ============ *@
+            <section class="card">
+                @if (SelectedNode is { } selNode)
+                {
+                    <h2>📍 @selNode.Name</h2>
+                    <p class="hint mono">@selNode.MacAddress</p>
+                    <p>
+                        <span class="badge badge--@StatusClass(selNode)">@StatusText(selNode)</span>
+                        @if (selNode.Hops >= 0)
+                        {
+                            <span class="hint">&nbsp;@selNode.Hops hop(s) from gateway</span>
+                        }
+                        @if (selNode.Dependents > 0)
+                        {
+                            <span class="hint">&nbsp;&middot; relays traffic for @selNode.Dependents node(s)</span>
+                        }
+                    </p>
+
+                    @if (!selNode.IsGateway)
+                    {
+                        <div class="row">
+                            @if (selNode.IsDown)
+                            {
+                                <button class="btn small" @onclick="() => Mesh.RestoreAsync(selNode.MacAddress)">♻ Restore node</button>
+                            }
+                            else
+                            {
+                                <button class="btn small danger" @onclick="() => Mesh.FailAsync(selNode.MacAddress)">💥 Simulate failure</button>
+                            }
+                        </div>
+                    }
+
+                    @if (Mesh.Route is { } route)
+                    {
+                        <table class="mini-table">
+                            <thead><tr><th>Strategy</th><th>Route to gateway</th><th>Hops</th><th>Power</th></tr></thead>
+                            <tbody>
+                                <tr><td>Lowest power (Prim MST)</td><td>@(route.Found ? route.MstRoute : "No route")</td><td>@route.MstHops</td><td>@F1(route.MstCost)</td></tr>
+                                <tr><td>Fewest hops (BFS)</td><td>@(route.Found ? route.BfsRoute : "No route")</td><td>@route.BfsHops</td><td>@F1(route.BfsCost)</td></tr>
+                            </tbody>
+                        </table>
+                    }
+                }
+                else
+                {
+                    <h2>📍 Selected node</h2>
+                    <p class="hint">Click a node on the map, or search by MAC address, to track its routing path and view its telemetry history.</p>
+                }
+            </section>
+        </div>
+
+        @* ============ FAILOVER PLAN ============ *@
+        <section class="card">
+            <h2>🔁 Self-healing: failover plan</h2>
+            @if (analysis.Reroutes.Count == 0)
+            {
+                <p class="hint">No failures affecting routes: every node uses its original lowest-power route. Select a node that relays for others and press “Simulate failure”.</p>
+            }
+            @foreach (var rr in analysis.Reroutes)
+            {
+                <div class="reroute-row reroute-row--@(rr.Status == "No route" ? "bad" : "ok")" @key="rr.MacAddress">
+                    <strong>@rr.Name</strong>
+                    <span class="hint">was: @rr.OldRoute</span>
+                    <span>now: @rr.NewRoute</span>
+                </div>
+            }
+        </section>
+
+        @* ============ BFS RESULTS ============ *@
+        @if (Mesh.Connected is { } connected)
+        {
+            <section class="card">
+                <h2>🔎 BFS from the gateway</h2>
+                <h3>Connected (@connected.Connected.Count)</h3>
+                <div class="chips">
+                    @foreach (var c in connected.Connected)
+                    {
+                        <span class="chip">@c.Name <em>@c.Hops hop(s)</em></span>
+                    }
+                </div>
+                @if (connected.Down.Count > 0)
+                {
+                    <h3>Down (@connected.Down.Count)</h3>
+                    <div class="chips">
+                        @foreach (var d in connected.Down) { <span class="chip chip--bad">@d.Name</span> }
+                    </div>
+                }
+                @if (connected.CutOff.Count > 0)
+                {
+                    <h3>Alive but cut off (@connected.CutOff.Count)</h3>
+                    <div class="chips">
+                        @foreach (var x in connected.CutOff) { <span class="chip chip--warn">@x.Name</span> }
+                    </div>
+                }
+            </section>
+        }
+
+        @* ============ HISTORICAL LOG (AVL) ============ *@
+        <section class="card">
+            <h2>🌳 Historical telemetry log (AVL range query) @(SelectedNode is null ? "" : "— " + SelectedNode.Name)</h2>
+            @if (Mesh.SelectedMac is null)
+            {
+                <p class="hint">Select a node to query its history.</p>
+            }
+            else
+            {
+                <div class="filter-bar">
+                    <label>From <input type="datetime-local" @bind="Mesh.HistFrom" /></label>
+                    <label>To <input type="datetime-local" @bind="Mesh.HistTo" /></label>
+                    <label>Limit <input type="number" min="1" max="5000" @bind="Mesh.HistLimit" /></label>
+                    <button class="btn small" @onclick="Mesh.QueryHistoryAsync">Query range</button>
+                    <button class="btn small" @onclick="Mesh.LatestAsync">Latest 100</button>
+                </div>
+
+                @if (Mesh.History is { } hist)
+                {
+                    <p class="hint">
+                        Returned @hist.Returned of @hist.TotalStored stored@(hist.Truncated ? " (limit reached)" : "")
+                        &middot; query @F1(hist.QueryMicroseconds) µs &middot; tree height @hist.TreeHeight
+                    </p>
+                    <div class="history-list">
+                        @foreach (var pt in hist.Points)
+                        {
+                            <div class="log-row">
+                                <span class="feed-time">@FormatTime(pt)</span>
+                                <span>@pt.Value.ToString("F2", CultureInfo.InvariantCulture)</span>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </section>
+
+        @* ============ BENCHMARK ============ *@
+        <section class="card">
+            <h2>⏱️ Benchmark: AVL tree vs linear list vs Part 1 BST</h2>
+            <div class="filter-bar">
+                <label>Readings <input type="number" min="1000" max="500000" step="1000" @bind="Mesh.BenchCount" /></label>
+                <button class="btn small" @onclick="Mesh.RunBenchmarkAsync" disabled="@Mesh.Busy">@(Mesh.Busy ? "Running…" : "Run benchmark")</button>
+            </div>
+            @if (Mesh.Benchmark is { } bench)
+            {
+                <table class="mini-table">
+                    <thead><tr><th>Structure</th><th>Readings</th><th>Insert (ms)</th><th>1% range query (µs)</th></tr></thead>
+                    <tbody>
+                        <tr><td>AVL tree</td><td>@bench.Count</td><td>@F1(bench.AvlInsertMs)</td><td>@F1(bench.AvlRangeMicros)</td></tr>
+                        <tr><td>Linear list scan</td><td>@bench.Count</td><td>@F1(bench.ListInsertMs)</td><td>@F1(bench.ListScanMicros)</td></tr>
+                        <tr><td>Part 1 BST (unbalanced)</td><td>@bench.BstCount</td><td>@F1(bench.BstInsertMs)</td><td>@F1(bench.BstRangeMicros)</td></tr>
+                        <tr><td>AVL tree (same size as BST)</td><td>@bench.BstCount</td><td>@F1(bench.AvlInsertMsAtBstCount)</td><td>-</td></tr>
+                    </tbody>
+                </table>
+                <p class="hint">
+                    AVL height @bench.AvlHeight (worst-case bound @bench.MaxPossibleAvlHeight) &middot; @bench.AvlRotations rotations
+                    &middot; balanced: @(bench.AvlBalanced ? "yes" : "NO") &middot; the query matched @bench.WindowMatches readings
+                    &middot; AVL is @bench.RangeSpeedupVsList× faster than scanning the list
+                </p>
+            }
+        </section>
+    }
+    else
+    {
+        <p class="hint">Loading topology&hellip; (is the API running?)</p>
+    }
+</div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        Mesh.Changed += OnMeshChanged;
+        await Mesh.RefreshAsync();
+    }
+
+    private void OnMeshChanged() => InvokeAsync(StateHasChanged);
+
+    private MeshNodeDto? SelectedNode =>
+        Mesh.Analysis?.Nodes.FirstOrDefault(n =>
+            string.Equals(n.MacAddress, Mesh.SelectedMac, StringComparison.OrdinalIgnoreCase));
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Mesh.FindAsync();
+    }
+
+    private static string F1(double v) => v.ToString("F1", CultureInfo.InvariantCulture);
+
+    private static string FormatTime(TimelinePointDto p) =>
+        p.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture);
+
+    private static string StatusText(MeshNodeDto n)
+    {
+        if (n.IsGateway) return "Gateway";
+        if (n.IsDown) return "DOWN: " + n.DownReason;
+        return n.Hops < 0 ? "CUT OFF" : "Connected";
+    }
+
+    private static string StatusClass(MeshNodeDto n)
+    {
+        if (n.IsDown) return "critical";
+        if (!n.IsGateway && n.Hops < 0) return "warning";
+        return "online";
+    }
+
+    public void Dispose() => Mesh.Changed -= OnMeshChanged;
+}
