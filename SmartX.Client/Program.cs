@@ -18,4 +18,7 @@ builder.Services.AddScoped(_ => new ApiClient(apiBaseAddress));
 builder.Services.AddSingleton(new StreamApiClient(apiBaseAddress));
 builder.Services.AddSingleton<StreamStore>();
 
+builder.Services.AddSingleton(new MeshApiClient(apiBaseAddress));
+builder.Services.AddSingleton<MeshStore>();
+
 await builder.Build().RunAsync();

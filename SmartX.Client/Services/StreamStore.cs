@@ -14,6 +14,7 @@ public class StreamStore : IAsyncDisposable
     public StreamStore(StreamApiClient api) => _api = api;
 
     public event Action? Changed;
+    public event Action<MeshAnalysisDto>? TopologyReceived;
 
     public bool HubConnected { get; private set; }
     public string? LastError { get; private set; }
@@ -49,6 +50,7 @@ public class StreamStore : IAsyncDisposable
 
         _hub.On<StreamReadingDto>("ReceiveStreamReading", OnReading);
         _hub.On<AlertDto>("ReceiveAlert", a =>
+        
         {
             Alerts.RemoveAll(x => x.Key == a.Key);
             Alerts.Insert(0, a);
@@ -58,6 +60,7 @@ public class StreamStore : IAsyncDisposable
         _hub.On<DeviceStateDto>("ReceiveDeviceUpdate", d => { Devices[d.MacAddress] = d; Notify(); });
         _hub.On<CommandRecordDto>("ReceiveCommand", cmd => { _ = RefreshHistoryAsync(); });
         _hub.On<List<SuggestedActionDto>>("ReceiveInsights", list => { Insights = list; Notify(); });
+        _hub.On<MeshAnalysisDto>("ReceiveTopology", m => TopologyReceived?.Invoke(m));
 
         _hub.Reconnecting += _ => { HubConnected = false; Notify(); return Task.CompletedTask; };
         _hub.Reconnected += async _ => { HubConnected = true; await RefreshAllAsync(); };
