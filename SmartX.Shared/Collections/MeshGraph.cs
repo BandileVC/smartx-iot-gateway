@@ -158,5 +158,43 @@ public class MeshGraph
         return path;
     }
 
-    // BFS (Step 4) and Prim (Step 5) go below this line, inside the class.
+        /// <summary>
+    /// Prim's algorithm, grown from the gateway. A binary min-heap (PriorityQueue) always yields the cheapest
+    /// link leaving the current tree; if it reaches an already-connected node it would form a cycle, so it is
+    /// skipped. Result: a spanning tree touching every live node with minimum total transmit power.
+    /// O(E log E).
+    /// </summary>
+    public MstResult Prim(string root, bool respectDown = true)
+    {
+        var result = new MstResult { Root = root };
+        if (!_adjacency.ContainsKey(root)) return result;
+        if (respectDown && IsDown(root)) return result;
+
+        var inTree = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { root };
+        var heap = new PriorityQueue<MstEdge, double>();
+
+        foreach (var link in _adjacency[root])
+        {
+            if (respectDown && IsDown(link.To)) continue;
+            heap.Enqueue(new MstEdge(root, link.To, link.Cost), link.Cost);
+        }
+
+        while (heap.TryDequeue(out var edge, out _))
+        {
+            if (inTree.Contains(edge.To)) continue;      
+
+            inTree.Add(edge.To);
+            result.Edges.Add(edge);
+            result.Parent[edge.To] = edge.From;          
+            result.TotalCost += edge.Cost;
+
+            foreach (var link in _adjacency[edge.To])
+            {
+                if (inTree.Contains(link.To)) continue;
+                if (respectDown && IsDown(link.To)) continue;
+                heap.Enqueue(new MstEdge(edge.To, link.To, link.Cost), link.Cost);
+            }
+        }
+        return result;
+    }
 }
