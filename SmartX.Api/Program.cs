@@ -22,6 +22,7 @@ builder.Services.AddSingleton<CommandService>();
 builder.Services.AddHostedService<TelemetryProcessor>();
 builder.Services.AddHostedService<DeviceWatchdog>();
 builder.Services.AddSingleton<HistoryStore>();
+builder.Services.AddSingleton<MeshService>();
 
 var encryptionKey = builder.Configuration["FileEncryption:Key"];
 if (string.IsNullOrWhiteSpace(encryptionKey))

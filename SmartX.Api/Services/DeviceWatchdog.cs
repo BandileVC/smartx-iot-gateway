@@ -5,7 +5,7 @@ using SmartX.Shared.Models;
 namespace SmartX.Api.Services;
 
 
-public class DeviceWatchdog(DeviceRegistry registry, AlertTracker alerts, PredictionEngine engine,
+public class DeviceWatchdog(DeviceRegistry registry, AlertTracker alerts, PredictionEngine engine, MeshService mesh,
     IHubContext<TelemetryHub> hub, IConfiguration config) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -37,6 +37,7 @@ public class DeviceWatchdog(DeviceRegistry registry, AlertTracker alerts, Predic
                     }
                 }
                 await hub.Clients.All.SendAsync("ReceiveInsights", engine.BuildInsights(), ct);
+                await mesh.BroadcastIfChangedAsync(false, ct);   
             }
         }
         catch (OperationCanceledException) { }
